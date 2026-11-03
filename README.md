@@ -1,6 +1,6 @@
 # Transformer from Scratch: Implementation, Verification and Algorithmic Probes
 
-A PyTorch implementation of the encoder–decoder Transformer of Vaswani et al. (2017), *Attention Is All You Need*. It comes with unit tests that check the properties the architecture depends on, and a small study of how well a ~0.9M-parameter instance learns, and generalises, on three algorithmic sequence-to-sequence tasks of increasing difficulty: **copy → reverse → multi-digit addition**.
+A PyTorch implementation of the encoder–decoder Transformer of Vaswani et al. (2017), *Attention Is All You Need*. It comes with unit tests that check the properties the architecture depends on, and a small study of how well a ~0.9M-parameter instance learns, and generalises, on three simple sequence-to-sequence tasks of increasing difficulty: **copy → reverse → multi-digit addition**.
 
 **Author:** Khadijah Yunusa
 
@@ -8,7 +8,7 @@ A PyTorch implementation of the encoder–decoder Transformer of Vaswani et al. 
 
 ## Abstract
 
-I implement every component of the original Transformer myself (sinusoidal positional encoding, scaled dot-product and multi-head attention, position-wise feed-forward layers, LayerNorm, Post-LN residual blocks, causal and padding masks, and the inverse-square-root warm-up schedule). I verified them with property tests such as decoder causality, invariance to source padding, numerical equivalence of LayerNorm to PyTorch's, and an exact closed-form parameter count. At the paper's *base* configuration with a 37k shared vocabulary and tied embeddings, the implementation has **63.1M parameters** (the paper reports 65M). For the experiments I train a scaled-down model (d_model=128, 4 heads, 2+2 layers, **~0.9M parameters**) on copy, reversal and addition. The splits are disjoint and the inputs variable-length. My primary metric is **autoregressive (greedy) exact-match accuracy on a held-out test set**, and I added an out-of-distribution test with longer inputs than any seen in training. To check that the learned attention does what it should, rather than only that it looks plausible, I measure how often cross-attention points at the source token being emitted.
+I implemented every component of the original Transformer (sinusoidal positional encoding, scaled dot-product and multi-head attention, position-wise feed-forward layers, LayerNorm, Post-LN residual blocks, causal and padding masks, and the inverse-square-root warm-up schedule). I verified them with property tests such as decoder causality, invariance to source padding, numerical equivalence of LayerNorm to PyTorch's, and an exact closed-form parameter count. At the paper's *base* configuration with a 37k shared vocabulary and tied embeddings, the implementation has **63.1M parameters** (the paper reports 65M). For the experiments I train a scaled-down model (d_model=128, 4 heads, 2+2 layers, **~0.9M parameters**) on copy, reversal and addition. The splits are disjoint and the inputs variable-length. My primary metric is **autoregressive (greedy) exact-match accuracy on a held-out test set**, and I added an out-of-distribution test with longer inputs than any seen in training. To check that the learned attention does what it should, rather than only that it looks plausible, I measure how often cross-attention points at the source token being emitted.
 
 ## Contents
 
@@ -82,7 +82,21 @@ The 63.1M figure is checked against a closed-form count in `tests/test_model.py`
 ## 4. Results
 
 <!-- RESULTS:START -->
-*Run `notebooks/run_experiments.ipynb`; `scripts/analyze.py` writes the results table here automatically.*
+| Task | Params | Seeds | Epochs | Test token acc, teacher-forced (%) | **Test exact match, greedy (%)** | OOD-length exact match, greedy (%) |
+|---|---:|---:|---|---:|---:|---:|
+| copy | 933,396 | 3 | 10, 8, 8 | 100.0 ± 0.0 | **99.8 ± 0.2** | 2.2 ± 2.6 |
+| reverse | 933,396 | 3 | 14, 16, 10 | 100.0 ± 0.0 | **99.8 ± 0.1** | 1.2 ± 1.7 |
+| addition | 931,086 | 3 | 19, 21, 33 | 100.0 ± 0.0 | **99.9 ± 0.1** | 0.0 ± 0.0 |
+
+Mean ± std over seeds. Per-seed test exact match: copy [100.0, 99.6, 99.75]; reverse [99.9, 99.9, 99.6]; addition [99.95, 99.95, 99.8].
+
+**Attention alignment** (seed 0, 500 test examples): fraction of output steps whose head-averaged last-layer cross-attention argmax lands on the source token being emitted: copy **100.0%**, reverse **100.0%**.
+
+**Exact match by source length** (seed 0):
+
+- copy: len 5: 100%, len 6: 100%, len 7: 100%, len 8: 100%, len 9: 100%, len 10: 100%, len 11: 100%, len 12: 100%, len 13: 3%, len 14: 0%, len 15: 0%, len 16: 0%
+- reverse: len 5: 100%, len 6: 100%, len 7: 100%, len 8: 100%, len 9: 100%, len 10: 100%, len 11: 100%, len 12: 100%, len 13: 14%, len 14: 0%, len 15: 0%, len 16: 0%
+- addition: len 5: 100%, len 6: 100%, len 7: 100%, len 9: 0%
 <!-- RESULTS:END -->
 
 ![Training curves](results/figures/training_curves.png)
@@ -97,13 +111,13 @@ The 63.1M figure is checked against a closed-form count in `tests/test_model.py`
 
 *Figure 3. Last-layer decoder cross-attention (averaged over heads) for one test example per task, from the trained models.*
 
-<!-- TODO after running: write 3–5 sentences of findings here, using only numbers from results/RESULTS.md. Questions to answer:
-  1. Does difficulty order as copy < reverse < addition, in epochs to converge and in final exact match?
-  2. How large is the gap between teacher-forced token accuracy and greedy exact match?
-  3. What happens beyond the training lengths? (Sinusoidal PE is often claimed to extrapolate; does it here?)
-  4. Does cross-attention align with the diagonal (copy) and anti-diagonal (reverse), per the alignment score?
-  5. For addition: where does attention go when emitting each digit (e.g. aligned operand digits; carries)?
--->
+### Findings
+
+**In-distribution, all three tasks are solved.** Greedy exact match on held-out test sets is 99.8 ± 0.2% (copy), 99.8 ± 0.1% (reverse) and 99.9 ± 0.1% (addition) over 3 seeds. Teacher-forced token accuracy rounds to 100.0% throughout, so the cost of decoding without access to the target is small (≤0.2 points). Difficulty shows up in training cost rather than final accuracy: copy converged in 8–10 epochs (~1.3–1.6k steps), reverse in 10–16 (~1.6–2.5k), and addition in 19–33 epochs on 2.5× more data (~7.4–12.9k steps).
+
+**Attention implements the algorithm.** For copy and reverse, the head-averaged last-layer cross-attention argmax lands on the exact source token being emitted at 100% of output steps (seed 0, 500 test examples). The learned alignment is the diagonal for copy and the anti-diagonal for reverse (Fig. 3).
+
+**There is no length generalisation.** Accuracy drops sharply at the boundary of the training lengths: from 100% at length 12 to 3% (copy) and 14% (reverse) at length 13, and to 0% from length 14 onwards. Addition with 4-digit operands, which never appear in training, scores 0% (seed 0). Sinusoidal encodings are defined for any position, but the model does not use them to extrapolate, consistent with Press et al. (2022). I haven't yet tested *how* these failures happen, for example whether the model emits EOS too early or produces wrong tokens. That, and comparing relative position schemes (ALiBi, RoPE) against sinusoidal encoding, is the natural next experiment.
 
 ### Component analyses
 
@@ -140,7 +154,7 @@ I first built this as a single notebook. Rewriting it with tests exposed these p
 
 ## 7. Limitations
 
-These are small algorithmic tasks. Success here shows the implementation is correct and trainable; it says little about natural-language performance. Three seeds give only a rough estimate of variance. I didn't tune hyperparameters beyond reasonable defaults, so the addition results especially are probably not the best this architecture can do.
+These are small algorithmic tasks. Success here shows the implementation is correct and trainable, it says little about natural-language performance. Three seeds give only a rough estimate of variance. I didn't tune hyperparameters beyond reasonable defaults, so the addition results especially are not the best this architecture can do.
 
 ## Reproduce
 
@@ -160,3 +174,4 @@ Or open `notebooks/run_experiments.ipynb` in Colab (T4) and choose Run all.
 - J. L. Ba, J. R. Kiros, G. E. Hinton. *Layer Normalization.* 2016.
 - A. Rush. *The Annotated Transformer.* 2018.
 - R. Xiong et al. *On Layer Normalization in the Transformer Architecture.* ICML 2020 (Pre-LN vs Post-LN).
+- O. Press, N. Smith, M. Lewis. *Train Short, Test Long: Attention with Linear Biases Enables Input Length Extrapolation.* ICLR 2022.
